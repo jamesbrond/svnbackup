@@ -1,0 +1,55 @@
+#!/bin/bash
+
+###############################################################################
+# Syncronizes the local subversion backup folder with a remote one
+#
+# @author Diego Brondo ~@:-]
+# @version 1.0
+# @since 2019-08-22
+###############################################################################
+
+SCRIPT=${0##*/}
+VERSION="1.0"
+RSYNC=`which rsync`
+SSH=`which ssh`
+SVN_BACKUP_DIR=${1%/}
+SVN_REMOTE_DIR=${2%/}
+
+help() {
+  printf "$SCRIPT - version $VERSION\n\n"
+  printf "Usage:\n"
+  printf "$SCRIPT <BACKUP FOLDER> <REMOTE FOLDER>\n"
+  printf "Example:\n"
+  printf "$SCRIPT /var/backup/ris2010 csh@192.168.69.210:/home/pub/svn_backup/ris2010\n"
+}
+
+if [ ! -x "$RSYNC" ]; then
+  printf "ERROR 007- RSYNC executable not found\n"
+  exit 192
+fi
+if [ ! -x "$SSH" ]; then
+  printf "ERROR 008- SSH executable not found\n"
+  exit 192
+fi
+if [ $# -lt 2 ] || [ ! -d "$SVN_BACKUP_DIR" ] || [ -z $SVN_REMOTE_DIR ]; then
+  printf "ERROR 003- missing or invalid script parameter\n"
+  help
+  exit 192
+fi
+
+# log message
+log () {
+  printf "$1"
+  printf "`date --rfc-2822` $1" >> $LOG
+}
+
+BAK_STATUS_DIR=${SVN_BACKUP_DIR}/.svnbackup
+LOG=${BAK_STATUS_DIR}/logs/rsync.log
+
+log "Start sync from ${SVN_BACKUP_DIR} to ${SVN_REMOTE_DIR}\n"
+${RSYNC} -a -q --delete -e ${SSH} ${SVN_BACKUP_DIR} ${SVN_REMOTE_DIR} >> $LOG 2>&1
+log "Done\n"
+
+exit 0
+
+# ~@:-]

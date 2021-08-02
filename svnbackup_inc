@@ -1,0 +1,185 @@
+#!/bin/bash
+
+###############################################################################
+# Incremental SVN Backup Script
+# performs a ncremental backup if the last incremental backup revision is older
+# than the current HEAD revision
+#
+# @author Diego Brondo ~@:-]
+# @version 1.0
+# @since 2019-08-21
+###############################################################################
+
+SCRIPT=${0##*/}
+VERSION="1.0"
+SVN=`which svn`
+SVNLOOK=`which svnlook`
+SVNADMIN=`which svnadmin`
+BAK_TYPE=${1^^}
+SVN_REPO_DIR=${2%/}
+SVN_BACKUP_DIR=${3%/}
+MAIL=`which mail`
+MAIL_TO=${4}
+
+help() {
+  printf "$SCRIPT - version $VERSION\n\n"
+  printf "Usage:\n"
+  printf "$SCRIPT <FULL|INC> <REPO FOLDER> <BACKUP FOLDER> [<MAIL TO>]\n"
+}
+
+# log message
+log () {
+  printf "$1"
+  printf "`date --rfc-2822` $1" >> $LOG
+}
+
+# bak_full_filename TIME STAMP REVISION
+bak_full_filename() {
+  # <BAK DIR>/<REPO NAME>-<TIME STAMP>-r<REVISION>_full
+  echo "${SVN_BACKUP_DIR}/${REP_BASE}-$1-r$2_full"
+}
+
+bak_inc_filename() {
+  # <BAK DIR>/<REPO NAME>-<TIME STAMP>-r<REVISION>_full
+  echo "${SVN_BACKUP_DIR}/${REP_BASE}-$1-r$2_inc"
+}
+
+# mail rcpt subject text
+mail() {
+  if [ -x "$MAIL" ] && [ -n "$MAIL_TO" ]; then
+    echo "$2" | ${MAIL} -s "[$SCRIPT - $REP_BASE] $1" -aFrom:$SCRIPT@noreply.com\<$SCRIPT@noreply.com\> "$MAIL_TO"
+  fi
+}
+
+if [ ! -x "$SVNADMIN" ]; then
+  echo "SVNADMIN executable not found"
+  exit 192
+fi
+
+if [ ! -x "$SVNLOOK" ]; then
+  echo "SVNLOOK executable not found"
+  exit 192
+fi
+
+if [ $# -lt 2 ] || [ ! -d "$SVN_REPO_DIR" ]; then
+  printf "ERROR 003- missing or invalid script parameter\n"
+  help
+  exit 192
+fi
+
+REP_BASE=`basename ${SVN_REPO_DIR}`
+
+if [ ! -d "$SVN_BACKUP_DIR" ]; then
+  mkdir -p "$SVN_BACKUP_DIR" 2>/dev/null
+  if [ $? -ne 0 ]; then
+    mail "FAILED" "Cannot create $SVN_BACKUP_DIR folder."
+    exit 192
+  fi
+fi
+
+BAK_STATUS_DIR=${SVN_BACKUP_DIR}/.svnbackup
+LOG=${BAK_STATUS_DIR}/logs/${REP_BASE}_full.log
+mkdir -p ${BAK_STATUS_DIR}/logs
+mkdir -p ${BAK_STATUS_DIR}/status/dates
+mkdir -p ${BAK_STATUS_DIR}/status/revisions
+mkdir -p ${BAK_STATUS_DIR}/MD5SUMS
+
+DATETIME=`date +%Y%m%d`
+TSTAMP=`date +%s`
+
+
+HEAD_REV=`${SVNLOOK} youngest ${SVN_REPO_PATH} 2>/dev/null`
+REP_BASE=`basename ${SVN_REPO_PATH}`
+DATETIME=`date +%Y%m%d`
+TSTAMP=`date +%s`
+BAK_VAR=${SVN_BACKUP_PATH}/.svnbackup
+mkdir -p ${BAK_VAR}/status/dates
+mkdir -p ${BAK_VAR}/status/revisions
+BAK_LAST_INC_REV=`cat ${BAK_VAR}/status/revisions/${REP_BASE}_inc.rev 2>/dev/null`
+BAK_LAST_INC_TSTAMP=`cat ${BAK_VAR}/status/dates/${REP_BASE}_inc.dt 2>/dev/null`
+BAK_LAST_FULL_REV=`cat ${BAK_VAR}/status/revisions/${REP_BASE}_full.rev 2>/dev/null`
+BAK_LAST_FULL_TSTAMP=`cat ${BAK_VAR}/status/dates/${REP_BASE}_full.dt 2>/dev/null`
+
+echo "head @$HEAD_REV@"
+echo "last inc rev $BAK_LAST_INC_REV"
+echo "last inc tstamp $BAK_LAST_INC_TSTAMP"
+
+if [ -e $HEAD_REV ]; then
+  echo "Cannot get repository latest revision"
+  #TODO uncomment exit 192
+  HEAD_REV=0
+fi
+
+if [ -e $BAK_LAST_INC_REV ]; then
+  BAK_LAST_INC_REV=0
+fi
+
+#  check if exist full backup with the latest revision
+if [ ! $HEAD_REV -gt $BAK_LAST_FULL_REV ] && [ -f "${SVN_BACKUP_PATH}/${REP_BASE}-${BAK_LAST_FULL_TSTAMP}-r${BAK_LAST_FULL_REV}.dmp.bz2" ]; then
+  echo "nothing to do"
+  #TODO uncomment exit 192
+fi
+
+if [ ! $HEAD_REV -gt $BAK_LAST_INC_REV ] && [ -f "${SVN_BACKUP_PATH}/${REP_BASE}-${BAK_LAST_INC_TSTAMP}-r${BAK_LAST_INC_REV}.dmp.bz2" ]; then
+  echo "nothing to do"
+  #TODO uncomment exit 192
+fi
+
+echo "**********************************************************"
+echo "`date --rfc-2822`  - Incremental back up ${rep} : "
+echo "     oldest revision ${REP_LAST_BK_REV} - newest revision ${CURR_REV}"
+echo
+
+DUMPFILE=${SVN_BACKUP_PATH}/${REP_BASE}-${TSTAMP}-r${HEAD_REV}.dmp ${DUMP_DIR}/${REP_BASE}-${TSTAMP}-r${BAK_LAST_INC_REV}-${BAK_LAST_INC_REV}.dmp
+${SVN_ADMIN} --quiet dump ${SVN_REPO_PATH} --incremental -r${BAK_LAST_INC_REV}:${HEAD_REV} > ${DUMPFILE}
+echo ${TSTAMP} > ${BAK_VAR}/status/dates/${REP_BASE}_inc.dt
+echo ${CURR_REV} > ${BAK_VAR}/status/revisions/${REP_BASE}_inc.rev
+bzip2 --compress --best ${DUMPFILE}
+
+# # make sure to get the subversion environment variables
+# . /etc/profile.d/subversion.sh
+#
+# # path to subversion binaries
+# SVN_BINPATH=${SVN_HOME}/bin
+#
+# # path to parent of all repositories to be dumped
+# SVN_REPPATH=/opt/svn/repositories
+#
+# # destination directory for backup files
+# DUMP_DIR=/backup/svn
+#
+# # status directory
+# SVN_VAR=/home/svn/var
+#
+# DATETIME=`date +%Y%m%d`
+#
+# for rep in ${SVN_REPPATH}/*;
+# do
+#   TSTAMP=`date +%s`
+#   CURR_REV=`${SVN_BINPATH}/svnlook youngest ${rep}`
+#   REP_BASE=`basename $rep`
+#
+#   if [ -e ${SVN_VAR}/status/dates/${REP_BASE}.dt ] ; then
+#     REP_LAST_BK_TSTAMP=`cat ${SVN_VAR}/status/dates/${REP_BASE}.dt`
+#     REP_LAST_BK_REV=`cat ${SVN_VAR}/status/revisions/${REP_BASE}.rev`
+#   else
+#     REP_LAST_BK_TSTAMP=0
+#     REP_LAST_BK_REV=0
+#   fi
+#
+#   if [ ${CURR_REV} -gt ${REP_LAST_BK_REV} ] ; then
+#     echo "**********************************************************"
+#     echo "`date --rfc-2822`  - Incremental back up ${rep} : "
+#     echo "     oldest revision ${REP_LAST_BK_REV} - newest revision ${CURR_REV}"
+#     echo
+#
+#     DUMPFILE=${DUMP_DIR}/${REP_BASE}-${DATETIME}-${REP_LAST_BK_REV}-${CURR_REV}.dmp
+#     ${SVN_BINPATH}/svnadmin --quiet dump $rep --incremental -r${REP_LAST_BK_REV}:${CURR_REV}> ${DUMPFILE}
+#     echo ${TSTAMP} > ${SVN_VAR}/status/dates/${REP_BASE}.dt
+#     echo ${CURR_REV} > ${SVN_VAR}/status/revisions/${REP_BASE}.rev
+#     bzip2 --compress --best ${DUMPFILE}
+#   fi
+# done
+#
+# echo
+# echo `ls -hl ${DUMP_DIR}/*.bz2`

@@ -1,0 +1,268 @@
+#!/bin/bash
+
+###############################################################################
+# SVN Backup Script
+# performs a full or incremental backup if the last full or incremental backup
+#`revision is older than the current HEAD revision
+#
+# @author Diego Brondo ~@:-]
+# @version 1.0
+# @since 2019-08-22
+###############################################################################
+
+SCRIPT=${0##*/}
+VERSION="1.0"
+SVN=`which svn`
+SVNLOOK=`which svnlook`
+SVNADMIN=`which svnadmin`
+MAIL=`which mail`
+MD5=`which md5sum`
+
+svnbackup_help() {
+  printf "$SCRIPT - version $VERSION\n\n"
+  printf "Usage:\n"
+  printf "$SCRIPT [options...]\n\n"
+  printf "Options:\n"
+  printf "\t%s\t\t%s\n" "-b --backup" "Folder where store backups. It will be created if it not exists."
+  printf "\t%s\t\t%s\n" "-h --help" "Show this help ad exit."
+  printf "\t%s\t%s\n" "-i --incremental" "Perform incremental backup."
+  printf "\t%s\t\t%s\n" "-f --full" "Perform full backup."
+  printf "\t%s\t\t%s\n" "-m --mailto" "Comma separated list of mail address."
+  printf "\t%s\t\t%s\n" "-r --repository" "Folder of the repository to backup."
+  printf "\t%s\t\t%s\n\n" "--version" "Show $SCRIPT version and exit."
+  printf "Example:\n"
+  printf "\t$SCRIPT %s\n" "--full -r /var/repo/ris2010 -b /var/bkg/ris2010"
+}
+
+for i in "$@"; do
+  case $i in
+    -b|--backup)
+    shift
+    SVN_BACKUP_DIR="${1%/}"
+    shift
+    ;;
+    -i|--incremental)
+    BAK_TYPE="Incremental"
+    shift
+    ;;
+    -f|--full)
+    BAK_TYPE="Full"
+    shift
+    ;;
+    -m|--mail)
+    shift
+    MAIL_TO="$1"
+    shift
+    ;;
+    -r|--repository)
+    shift
+    SVN_REPO_DIR="${1%/}"
+    shift
+    ;;
+    -h|--help)
+    svnbackup_help
+    exit 0
+    ;;
+    --version)
+    echo $VERSION
+    exit 0
+    ;;
+    *)
+    # unknown option
+    ;;
+  esac
+done
+
+# log message
+log () {
+  printf "$1"
+  printf "`date --rfc-2822` $1" >> $LOG
+}
+
+# bak_full_filename TIME STAMP REVISION
+bak_full_filename() {
+  # <BKG DIR>/<REPO NAME>-<TIME STAMP>-r<REVISION>_full
+  echo "${SVN_REPO_BASE}-$1-r$2_full"
+}
+
+# bak_inc_filename TIMESTAMP LASTREVISION REVISION
+bak_inc_filename() {
+  # <REPO NAME>-<TIME STAMP>-r<REVISION>:<HEAD>_inc
+  echo "${SVN_REPO_BASE}-$1-r$2_$3_inc"
+}
+
+# mail rcpt subject text
+mail() {
+  if [ -x "$MAIL" ] && [ -n "$MAIL_TO" ]; then
+    printf "$2\n\nMay the backup be with you" | ${MAIL} -s "${SCRIPT^^} $1 - repository ${SVN_REPO_BASE:-'???'}" -aFrom:$SCRIPT@noreply.com\<$SCRIPT@noreply.com\> "$MAIL_TO"
+  fi
+}
+
+get_last_full() {
+  BAK_LAST_REV=`cat ${BAK_STATUS_DIR}/status/revisions/${SVN_REPO_BASE}_Full.rev 2>/dev/null`
+  BAK_LAST_TSTAMP=`cat ${BAK_STATUS_DIR}/status/dates/${SVN_REPO_BASE}_Full.dat 2>/dev/null`
+  if [ -z "$BAK_LAST_REV" ]; then
+    echo 0
+  else
+    BAK_OLD=$(bak_full_filename ${BAK_LAST_TSTAMP} ${BAK_LAST_REV})
+    if [ -e "${SVN_BACKUP_DIR}/$BAK_OLD.svndump.bz2" ]; then
+      echo 0
+    fi
+  fi
+  echo $BAK_LAST_REV
+}
+
+get_last_inc() {
+  BAK_LAST_REV=`cat ${BAK_STATUS_DIR}/status/revisions/${SVN_REPO_BASE}_Incremental.rev 2>/dev/null`
+  BAK_LAST_TSTAMP=`cat ${BAK_STATUS_DIR}/status/dates/${SVN_REPO_BASE}_Incremental.dat 2>/dev/null`
+  if [ -z "$BAK_LAST_REV" ]; then
+    echo $(get_last_full)
+  else
+    BAK_OLD=$(bak_inc_filename ${BAK_LAST_TSTAMP} "*" ${BAK_LAST_REV})
+    if [ -e "${SVN_BACKUP_DIR}/$BAK_OLD.svndump.bz2" ]; then
+      echo $(get_last_full)
+    fi
+  fi
+  echo $BAK_LAST_REV
+}
+
+full_backup() {
+  BAK_LAST_FULL_REV=$(get_last_full)
+  if [ ${HEAD_REV} -eq ${BAK_LAST_FULL_REV} ]; then
+    log "Last full backup already contains revision $HEAD_REV. Nothing to do\n"
+    mail "SUCCESS" "Last full backup already contains revision $HEAD_REV. Nothing to do."
+    exit 0
+  fi
+
+  BAK_NEW=$(bak_full_filename ${TSTAMP} ${HEAD_REV})
+  log "Current revision: $HEAD_REV\n"
+  log "Last full backup revision: $BAK_LAST_FULL_REV\n"
+  ${SVNADMIN} --quiet dump ${SVN_REPO_DIR} > "${SVN_BACKUP_DIR}/${BAK_NEW}.svndump" 2>>$LOG
+}
+
+incremental_backup() {
+  BAK_LAST_REV=$(get_last_inc)
+  if [ ${HEAD_REV} -eq ${BAK_LAST_REV} ]; then
+    log "Last revision $HEAD_REV has been already backuped. Nothing to do\n"
+    mail "SUCCESS" "Last revision $HEAD_REV has been already backuped. Nothing to do."
+    exit 0
+  fi
+
+  log "Current revision: $HEAD_REV\n"
+  log "Last full backup revision: $BAK_LAST_REV\n"
+  BAK_LAST_REV=$(($BAK_LAST_REV + 1))
+  BAK_NEW=$(bak_inc_filename ${TSTAMP} ${BAK_LAST_REV} ${HEAD_REV})
+  ${SVNADMIN} --quiet dump ${SVN_REPO_DIR} --incremental -r${BAK_LAST_REV}:${HEAD_REV} > "${SVN_BACKUP_DIR}/${BAK_NEW}.svndump" 2>>$LOG
+}
+
+# check for svn tools
+if [ ! -x "$SVNADMIN" ]; then
+  printf "ERROR 001- SVNADMIN executable not found\n"
+  exit 192
+fi
+if [ ! -x "$SVNLOOK" ]; then
+  printf "ERROR 002- SVNLOOK executable not found\n"
+  exit 192
+fi
+if [ ! -x "$MD5" ]; then
+  printf "ERROR 0013- MD5SUM executable not found\n"
+  exit 192
+fi
+
+# check if inputs are valid
+if [ -z $BAK_TYPE ]; then
+  printf "ERROR 009- Type of backup not spefified. Use options --full or --incremental\n"
+  mail "FAIL" "Type of backup not spefified. No options --full or --incremental pass t $SCRIPT."
+  svnbackup_help
+  exit 192
+fi
+if [ $BAK_TYPE != 'Full' ] && [ $BAK_TYPE != 'Incremental' ]; then
+  log "ERROR 011- Backup can be only full or incremental\n"
+  mail "FAIL" "Uncknown type of backup: it can be only full or incremental."
+  svnbackup_help
+  exit 192
+fi
+if [ ! -d "$SVN_REPO_DIR" ]; then
+  printf "ERROR 003- Missing or invalid script parameter\n"
+  mail "FAIL" "Missing or invalid script parameter."
+  svnbackup_help
+  exit 192
+fi
+if [ ! -d "$SVN_BACKUP_DIR" ]; then
+  mkdir -p "$SVN_BACKUP_DIR" 2>/dev/null
+  if [ $? -ne 0 ]; then
+    printf "ERROR 010- Cannot create $SVN_BACKUP_DIR folder\n"
+    mail "FAIL" "Cannot create $SVN_BACKUP_DIR folder."
+    exit 192
+  fi
+fi
+
+DATETIME=`date +%Y%m%d`
+TSTAMP=`date +%s`
+SVN_REPO_BASE=`basename ${SVN_REPO_DIR}`
+BAK_STATUS_DIR=${SVN_BACKUP_DIR}/.svnbackup
+LOG=${BAK_STATUS_DIR}/logs/${SVN_REPO_BASE}_${BAK_TYPE}.log
+mkdir -p ${BAK_STATUS_DIR}/logs
+mkdir -p ${BAK_STATUS_DIR}/status/dates
+mkdir -p ${BAK_STATUS_DIR}/status/revisions
+mkdir -p ${BAK_STATUS_DIR}/MD5SUMS
+
+log "$BAK_TYPE backup ${SVN_REPO_DIR}\n"
+
+HEAD_REV=`${SVNLOOK} youngest ${SVN_REPO_DIR} 2>>$LOG`
+if [ $? -ne 0 ] || [ -z $HEAD_REV ]; then
+  log "ERROR 004- Cannot get latest revision of repository\n"
+  mail "FAIL" "Cannot get latest revision of repository."
+  exit 192
+fi
+
+if [ $BAK_TYPE == 'Full' ]; then
+  full_backup
+elif [ $BAK_TYPE == 'Incremental' ]; then
+  incremental_backup
+fi
+
+# check if the dump susccessed
+if test $? -eq 0; then
+  # svnadmin command successed, but we do not trust no one so check if
+  # backup contains the line "Revision-number:" followed by the HEAD
+  # revision number
+  grep --text "^Revision-number: $HEAD_REV" "${SVN_BACKUP_DIR}/${BAK_NEW}.svndump" >/dev/null
+	if test $? -ne 0; then
+    log "ERROR 005- No 'Revision-number: $HEAD_REV' line found\n"
+    mail "FAIL" "$BAK_TYPE backup failed. No 'Revision-number: $HEAD_REV' line found."
+    rm -f "${SVN_BACKUP_DIR}/${BAK_NEW}.svndump"
+    exit 192
+  fi
+else
+  log "ERROR 006- $BAK_TYPE backup failed\n"
+  mail "FAIL" "$BAK_TYPE backup failed. See log $LOG for details."
+  exit 192
+fi
+bzip2 --compress --best "${SVN_BACKUP_DIR}/${BAK_NEW}.svndump"
+
+# add the md5sum of the file to MD5SUMS files storing md5sums of the backup
+${MD5} "$SVN_BACKUP_DIR/$BAK_NEW.svndump.bz2" | awk '{print $1}' > "$BAK_STATUS_DIR/MD5SUMS/$BAK_NEW.md5" 2>/dev/null
+
+log "$BAK_TYPE backup in ${SVN_BACKUP_DIR}/$BAK_NEW.svndump.bz2\n"
+echo ${TSTAMP} > ${BAK_STATUS_DIR}/status/dates/${SVN_REPO_BASE}_${BAK_TYPE}.dat
+echo ${HEAD_REV} > ${BAK_STATUS_DIR}/status/revisions/${SVN_REPO_BASE}_${BAK_TYPE}.rev
+mail "SUCCESS" "$BAK_TYPE backup in ${SVN_BACKUP_DIR}/$BAK_NEW.svndump.bz2"
+
+# clean all old backup (incremental ad full)
+if [ $BAK_TYPE == 'Full' ]; then
+  # remove all incremental
+  log "Remove all obsolete incremental backups\n"
+  rm -f "${SVN_BACKUP_DIR}/${SVN_REPO_BASE}-*_inc.svndump.bz2" >> $LOG 2>&1
+  rm -f "${BAK_STATUS_DIR}/MD5SUMS/${SVN_REPO_BASE}*_inc.md5" >> $LOG 2>&1
+  rm -f "${BAK_STATUS_DIR}/status/revisions/${SVN_REPO_BASE}_Incremental.rev" >> $LOG 2>&1
+  rm -f "${BAK_STATUS_DIR}/status/dates/${SVN_REPO_BASE}_Incremental.dat" >> $LOG 2>&1
+  # remove old full backups
+  log "Remove obsolete full backups\n"
+  ls -tp ${SVN_BACKUP_DIR}/${SVN_REPO_BASE}-*_full.svndump.bz2 | grep -v '/$' | tail -n +2 | xargs -d '\n' -r rm --
+  ls -tp ${BAK_STATUS_DIR}/MD5SUMS/${SVN_REPO_BASE}-*_full.md5 | grep -v '/$' | tail -n +2 | xargs -d '\n' -r rm --
+fi
+
+exit 0
+
+# ~@:-]
