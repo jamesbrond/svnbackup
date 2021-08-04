@@ -28,7 +28,7 @@ Options:
 
 Example:
 
-    svnbackup --full -r /var/repo/ris2010 -b /var/bkg/ris2010
+    svnbackup --full -r /var/repo/myrepo -b /var/backup/myrepo
 
 ## rsyncbackup
 
