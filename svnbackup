@@ -31,7 +31,7 @@ svnbackup_help() {
   printf "\t%s\t\t%s\n" "-r --repository" "Folder of the repository to backup."
   printf "\t%s\t\t%s\n\n" "--version" "Show $SCRIPT version and exit."
   printf "Example:\n"
-  printf "\t$SCRIPT %s\n" "--full -r /var/repo/ris2010 -b /var/bkg/ris2010"
+  printf "\t$SCRIPT %s\n" "--full -r /var/repo/myrepo -b /var/backup/myrepo"
 }
 
 for i in "$@"; do

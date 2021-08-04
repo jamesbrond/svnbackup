@@ -20,7 +20,7 @@ help() {
   printf "Usage:\n"
   printf "$SCRIPT <BACKUP FOLDER> <REMOTE FOLDER>\n"
   printf "Example:\n"
-  printf "$SCRIPT /var/backup/ris2010 csh@192.168.69.210:/home/pub/svn_backup/ris2010\n"
+  printf "$SCRIPT /var/backup/myrepo remoteuser@remotehost:/pub/repo/backup\n"
 }
 
 if [ ! -x "$RSYNC" ]; then
@@ -31,6 +31,12 @@ if [ ! -x "$SSH" ]; then
   printf "ERROR 008- SSH executable not found\n"
   exit 192
 fi
+
+if [ "$SVN_BACKUP_DIR" == "--help" ]; then
+  help
+  exit 0
+fi
+
 if [ $# -lt 2 ] || [ ! -d "$SVN_BACKUP_DIR" ] || [ -z $SVN_REMOTE_DIR ]; then
   printf "ERROR 003- missing or invalid script parameter\n"
   help

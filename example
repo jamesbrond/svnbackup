@@ -1,0 +1,22 @@
+#!/bin/bash
+
+SVNBACKUP_SCRIPT="./svnbackup"
+RSYNCBACKUP_SCRIPT="./rsyncbackup"
+REPO_DIR="/var/repo/myrepo"
+BAK_DIR="/var/backup/myrepo"
+REMOTE_DIR="remoteuser@remotehost:/pub/repo/backup"
+MAILTO="jamesbrond@example.com"
+
+if [ -x "$SVNBACKUP_SCRIPT" ]; then
+  # backup
+  ${SVNBACKUP_SCRIPT} $1 -r ${REPO_DIR} -b ${BAK_DIR} --mail ${MAILTO}
+
+  if [ $? -eq 0 ] && [ -x "$RSYNCBACKUP_SCRIPT" ]; then
+    # sync to remote
+    ${RSYNCBACKUP_SCRIPT} ${BAK_DIR} ${REMOTE_DIR}
+  fi
+fi
+
+exit 0
+
+# ~@:-]
