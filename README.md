@@ -6,6 +6,8 @@ Performs a full or incremental backup if the last full or incremental backup rev
 
 - mail
 - md5sum`
+- rsync (rsyncbakcup only)
+- ssh  (rsyncbakcup only)
 - svn
 - svnadmin
 - svnlook
